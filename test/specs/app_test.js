@@ -27,13 +27,26 @@ describe('application', function desc() {
     await this.app.client.waitUntilWindowLoaded();
     const count = await this.app.client.getWindowCount();
     count.should.equal(1);
-
     const opened = await this.app.browserWindow.isDevToolsOpened();
     opened.should.be.false;
 
     const visible = await this.app.browserWindow.isVisible();
     visible.should.be.true;
   });
+
+  if (process.platform === 'darwin') {
+    it.skip('should show closed window with cmd+tab', async () => {
+      // Unable to utilize Command key press due to: https://bugs.chromium.org/p/chromedriver/issues/detail?id=3023#c2
+      await this.app.client.waitUntilWindowLoaded();
+      await this.app.client.keys(['Meta', 'w']);
+      let visible = await this.app.browserWindow.isVisible();
+      visible.should.be.false;
+
+      this.app.client.keys(['Meta', 'Tab']);
+      visible = await this.app.browserWindow.isVisible();
+      visible.should.be.true;
+    });
+  }
 
   it.skip('should restore window bounds', async () => {
     // bounds seems to be incorrectly calculated in some environments
@@ -63,6 +76,7 @@ describe('application', function desc() {
 
   it('should show settings.html when there is no config file', async () => {
     await this.app.client.waitUntilWindowLoaded();
+    await this.app.client.pause(1000);
     const url = await this.app.client.getUrl();
     url.should.match(/\/settings.html$/);
 
@@ -71,9 +85,32 @@ describe('application', function desc() {
   });
 
   it('should show index.html when there is config file', async () => {
-    fs.writeFileSync(env.configFilePath, JSON.stringify({
-      url: env.mattermostURL,
-    }));
+    const config = {
+      version: 2,
+      teams: [{
+        name: 'example',
+        url: env.mattermostURL,
+        order: 0,
+      }, {
+        name: 'github',
+        url: 'https://github.com/',
+        order: 1,
+      }],
+      showTrayIcon: false,
+      trayIconTheme: 'light',
+      minimizeToTray: false,
+      notifications: {
+        flashWindow: 0,
+        bounceIcon: false,
+        bounceIconType: 'informational',
+      },
+      showUnreadBadge: true,
+      useSpellChecker: true,
+      enableHardwareAcceleration: true,
+      autostart: true,
+      darkMode: false,
+    };
+    fs.writeFileSync(env.configFilePath, JSON.stringify(config));
     await this.app.restart();
 
     const url = await this.app.client.getUrl();
@@ -81,18 +118,20 @@ describe('application', function desc() {
   });
 
   it('should upgrade v0 config file', async () => {
-    const settings = require('../../src/common/settings').default;
-    fs.writeFileSync(env.configFilePath, JSON.stringify({
+    const Config = require('../../src/common/config').default;
+    const newConfig = new Config(env.configFilePath);
+    const oldConfig = {
       url: env.mattermostURL,
-    }));
+    };
+    fs.writeFileSync(env.configFilePath, JSON.stringify(oldConfig));
     await this.app.restart();
 
     const url = await this.app.client.getUrl();
     url.should.match(/\/index.html$/);
 
     const str = fs.readFileSync(env.configFilePath, 'utf8');
-    const config = JSON.parse(str);
-    config.version.should.equal(settings.version);
+    const upgradedConfig = JSON.parse(str);
+    upgradedConfig.version.should.equal(newConfig.defaultData.version);
   });
 
   it.skip('should be stopped when the app instance already exists', (done) => {

@@ -3,10 +3,7 @@
 // See LICENSE.txt for license information.
 'use strict';
 
-import {app, dialog, ipcMain, Menu, shell} from 'electron';
-
-import settings from '../../common/settings';
-import buildConfig from '../../common/config/buildConfig';
+import {app, dialog, Menu, shell} from 'electron';
 
 function createTemplate(mainWindow, config, isDev) {
   const settingsURL = isDev ? 'http://localhost:8080/browser/settings.html' : `file://${app.getAppPath()}/browser/settings.html`;
@@ -15,7 +12,7 @@ function createTemplate(mainWindow, config, isDev) {
     type: 'separator',
   };
 
-  const appName = app.getName();
+  const appName = app.name;
   const firstMenuName = (process.platform === 'darwin') ? appName : 'File';
   const template = [];
 
@@ -42,7 +39,7 @@ function createTemplate(mainWindow, config, isDev) {
     },
   }];
 
-  if (buildConfig.enableServerManagement === true) {
+  if (config.enableServerManagement === true) {
     platformAppMenu.push({
       label: 'Sign in to Another Server',
       click() {
@@ -79,85 +76,132 @@ function createTemplate(mainWindow, config, isDev) {
   template.push({
     label: '&Edit',
     submenu: [{
-      role: 'undo',
+      label: 'Undo',
+      accelerator: 'CmdOrCtrl+Z',
+      click() {
+        mainWindow.webContents.send('undo');
+      },
     }, {
-      role: 'redo',
+      label: 'Redo',
+      accelerator: 'CmdOrCtrl+SHIFT+Z',
+      click() {
+        mainWindow.webContents.send('redo');
+      },
     }, separatorItem, {
-      role: 'cut',
+      label: 'Cut',
+      accelerator: 'CmdOrCtrl+X',
+      click() {
+        mainWindow.webContents.send('cut');
+      },
     }, {
-      role: 'copy',
+      label: 'Copy',
+      accelerator: 'CmdOrCtrl+C',
+      click() {
+        mainWindow.webContents.send('copy');
+      },
     }, {
-      role: 'paste',
+      label: 'Paste',
+      accelerator: 'CmdOrCtrl+V',
+      click() {
+        mainWindow.webContents.send('paste');
+      },
+    }, {
+      label: 'Paste and Match Style',
+      accelerator: 'CmdOrCtrl+SHIFT+V',
+      visible: process.platform === 'darwin',
+      click() {
+        mainWindow.webContents.send('paste-and-match');
+      },
     }, {
       role: 'selectall',
+      accelerator: 'CmdOrCtrl+A',
     }],
   });
+
+  const viewSubMenu = [{
+    label: 'Find..',
+    accelerator: 'CmdOrCtrl+F',
+    click(item, focusedWindow) {
+      focusedWindow.webContents.send('toggle-find');
+    },
+  }, {
+    label: 'Reload',
+    accelerator: 'CmdOrCtrl+R',
+    click(item, focusedWindow) {
+      if (focusedWindow) {
+        if (focusedWindow === mainWindow) {
+          mainWindow.webContents.send('reload-tab');
+        } else {
+          focusedWindow.reload();
+        }
+      }
+    },
+  }, {
+    label: 'Clear Cache and Reload',
+    accelerator: 'Shift+CmdOrCtrl+R',
+    click(item, focusedWindow) {
+      if (focusedWindow) {
+        if (focusedWindow === mainWindow) {
+          mainWindow.webContents.send('clear-cache-and-reload-tab');
+        } else {
+          focusedWindow.webContents.session.clearCache().then(focusedWindow.reload);
+        }
+      }
+    },
+  }, {
+    role: 'togglefullscreen',
+    accelerator: process.platform === 'darwin' ? 'Ctrl+Cmd+F' : 'F11',
+  }, separatorItem, {
+    label: 'Actual Size',
+    accelerator: 'CmdOrCtrl+0',
+    click() {
+      mainWindow.webContents.send('zoom-reset');
+    },
+  }, {
+    label: 'Zoom In',
+    accelerator: 'CmdOrCtrl+SHIFT+=',
+    click() {
+      mainWindow.webContents.send('zoom-in');
+    },
+  }, {
+    label: 'Zoom Out',
+    accelerator: 'CmdOrCtrl+-',
+    click() {
+      mainWindow.webContents.send('zoom-out');
+    },
+  }, separatorItem, {
+    label: 'Developer Tools for Application Wrapper',
+    accelerator: (() => {
+      if (process.platform === 'darwin') {
+        return 'Alt+Command+I';
+      }
+      return 'Ctrl+Shift+I';
+    })(),
+    click(item, focusedWindow) {
+      if (focusedWindow) {
+        focusedWindow.toggleDevTools();
+      }
+    },
+  }, {
+    label: 'Developer Tools for Current Server',
+    click() {
+      mainWindow.webContents.send('open-devtool');
+    },
+  }];
+
+  if (process.platform !== 'darwin') {
+    viewSubMenu.push(separatorItem);
+    viewSubMenu.push({
+      label: 'Toggle Dark Mode',
+      click() {
+        mainWindow.webContents.send('set-dark-mode');
+      },
+    });
+  }
+
   template.push({
     label: '&View',
-    submenu: [{
-      label: 'Find..',
-      accelerator: 'CmdOrCtrl+F',
-      click(item, focusedWindow) {
-        focusedWindow.webContents.send('toggle-find');
-      },
-    }, {
-      label: 'Reload',
-      accelerator: 'CmdOrCtrl+R',
-      click(item, focusedWindow) {
-        if (focusedWindow) {
-          if (focusedWindow === mainWindow) {
-            mainWindow.webContents.send('reload-tab');
-          } else {
-            focusedWindow.reload();
-          }
-        }
-      },
-    }, {
-      label: 'Clear Cache and Reload',
-      accelerator: 'Shift+CmdOrCtrl+R',
-      click(item, focusedWindow) {
-        if (focusedWindow) {
-          if (focusedWindow === mainWindow) {
-            mainWindow.webContents.send('clear-cache-and-reload-tab');
-          } else {
-            focusedWindow.webContents.session.clearCache(() => {
-              focusedWindow.reload();
-            });
-          }
-        }
-      },
-    }, {
-      role: 'togglefullscreen',
-    }, separatorItem, {
-      role: 'resetzoom',
-    }, {
-      role: 'zoomin',
-    }, {
-      label: 'Zoom In (hidden)',
-      accelerator: 'CmdOrCtrl+=',
-      visible: false,
-      role: 'zoomin',
-    }, {
-      role: 'zoomout',
-    }, {
-      label: 'Zoom Out (hidden)',
-      accelerator: 'CmdOrCtrl+Shift+-',
-      visible: false,
-      role: 'zoomout',
-    }, separatorItem, {
-      label: 'Toggle Developer Tools',
-      accelerator: (() => {
-        if (process.platform === 'darwin') {
-          return 'Alt+Command+I';
-        }
-        return 'Ctrl+Shift+I';
-      })(),
-      click(item, focusedWindow) {
-        if (focusedWindow) {
-          focusedWindow.toggleDevTools();
-        }
-      },
-    }],
+    submenu: viewSubMenu,
   });
   template.push({
     label: '&History',
@@ -168,7 +212,7 @@ function createTemplate(mainWindow, config, isDev) {
         if (focusedWindow === mainWindow) {
           mainWindow.webContents.send('go-back');
         } else if (focusedWindow.webContents.canGoBack()) {
-          focusedWindow.goBack();
+          focusedWindow.webContents.goBack();
         }
       },
     }, {
@@ -178,20 +222,24 @@ function createTemplate(mainWindow, config, isDev) {
         if (focusedWindow === mainWindow) {
           mainWindow.webContents.send('go-forward');
         } else if (focusedWindow.webContents.canGoForward()) {
-          focusedWindow.goForward();
+          focusedWindow.webContents.goForward();
         }
       },
     }],
   });
 
-  const teams = settings.mergeDefaultTeams(config.teams);
+  const teams = config.teams;
   const windowMenu = {
     label: '&Window',
     submenu: [{
       role: 'minimize',
+
+      // empty string removes shortcut on Windows; null will default by OS
+      accelerator: process.platform === 'win32' ? '' : null,
     }, {
       role: 'close',
-    }, separatorItem, ...teams.slice(0, 9).map((team, i) => {
+      accelerator: 'CmdOrCtrl+W',
+    }, separatorItem, ...teams.slice(0, 9).sort((teamA, teamB) => teamA.order - teamB.order).map((team, i) => {
       return {
         label: team.name,
         accelerator: `CmdOrCtrl+${i + 1}`,
@@ -218,11 +266,11 @@ function createTemplate(mainWindow, config, isDev) {
   };
   template.push(windowMenu);
   const submenu = [];
-  if (buildConfig.helpLink) {
+  if (config.helpLink) {
     submenu.push({
       label: 'Learn More...',
       click() {
-        shell.openExternal(buildConfig.helpLink);
+        shell.openExternal(config.helpLink);
       },
     });
     submenu.push(separatorItem);
@@ -231,15 +279,8 @@ function createTemplate(mainWindow, config, isDev) {
     label: `Version ${app.getVersion()}`,
     enabled: false,
   });
-  if (buildConfig.enableAutoUpdater) {
-    submenu.push({
-      label: 'Check for Updates...',
-      click() {
-        ipcMain.emit('check-for-updates', true);
-      },
-    });
-  }
-  template.push({label: '&Help', submenu});
+
+  template.push({label: 'Hel&p', submenu});
   return template;
 }
 

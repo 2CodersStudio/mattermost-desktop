@@ -3,19 +3,25 @@
 // See LICENSE.txt for license information.
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 import {app, BrowserWindow} from 'electron';
+
+import * as Validator from './Validator';
 
 function saveWindowState(file, window) {
   const windowState = window.getBounds();
   windowState.maximized = window.isMaximized();
-  windowState.fullscreen = window.isFullScreen();
   try {
     fs.writeFileSync(file, JSON.stringify(windowState));
   } catch (e) {
     // [Linux] error happens only when the window state is changed before the config dir is created.
     console.log(e);
   }
+}
+
+function isFramelessWindow() {
+  return os.platform() === 'darwin' || (os.platform() === 'win32' && os.release().startsWith('10'));
 }
 
 function createMainWindow(config, options) {
@@ -29,53 +35,76 @@ function createMainWindow(config, options) {
   let windowOptions;
   try {
     windowOptions = JSON.parse(fs.readFileSync(boundsInfoPath, 'utf-8'));
+    windowOptions = Validator.validateBoundsInfo(windowOptions);
+    if (!windowOptions) {
+      throw new Error('Provided bounds info file does not validate, using defaults instead.');
+    }
   } catch (e) {
     // Follow Electron's defaults, except for window dimensions which targets 1024x768 screen resolution.
     windowOptions = {width: defaultWindowWidth, height: defaultWindowHeight};
   }
 
+  const {maximized: windowIsMaximized} = windowOptions;
+
   if (process.platform === 'linux') {
     windowOptions.icon = options.linuxAppIcon;
   }
   Object.assign(windowOptions, {
-    title: app.getName(),
+    title: app.name,
     fullscreenable: true,
-    show: false,
+    show: false, // don't start the window until it is ready and only if it isn't hidden
+    paintWhenInitiallyHidden: true, // we want it to start painting to get info from the webapp
     minWidth: minimumWindowWidth,
     minHeight: minimumWindowHeight,
+    frame: !isFramelessWindow(),
+    fullscreen: false,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#fff', // prevents blurry text: https://electronjs.org/docs/faq#the-font-looks-blurry-what-is-this-and-what-can-i-do
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      webviewTag: true,
+      disableBlinkFeatures: 'Auxclick',
+    },
   });
 
   const mainWindow = new BrowserWindow(windowOptions);
   mainWindow.deeplinkingUrl = options.deeplinkingUrl;
+  mainWindow.setMenuBarVisibility(false);
 
   const indexURL = global.isDev ? 'http://localhost:8080/browser/index.html' : `file://${app.getAppPath()}/browser/index.html`;
   mainWindow.loadURL(indexURL);
 
-  // This section should be called after loadURL() #570
-  if (options.hideOnStartup) {
-    if (windowOptions.maximized) {
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.webContents.zoomLevel = 0;
+
+    // handle showing the window when not launched by auto-start
+    // - when not configured to auto-start, immediately show contents and optionally maximize as needed
+    mainWindow.show();
+    if (windowIsMaximized) {
       mainWindow.maximize();
     }
+  });
 
-    // on MacOS, the window is already hidden until 'ready-to-show'
-    if (process.platform !== 'darwin') {
-      mainWindow.minimize();
+  mainWindow.once('show', () => {
+    // handle showing the app when hidden to the tray icon by auto-start
+    // - optionally maximize the window as needed
+    if (windowIsMaximized) {
+      mainWindow.maximize();
     }
-  } else if (windowOptions.maximized) {
-    mainWindow.maximize();
-  }
+  });
+
+  mainWindow.once('restore', () => {
+    // handle restoring the window when minimized to the app icon by auto-start
+    // - optionally maximize the window as needed
+    if (windowIsMaximized) {
+      mainWindow.maximize();
+    }
+  });
 
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences) => {
     webPreferences.nodeIntegration = false;
-  });
-
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.webContents.setZoomLevel(0);
-    if (process.platform !== 'darwin') {
-      mainWindow.show();
-    } else if (options.hideOnStartup !== true) {
-      mainWindow.show();
-    }
+    webPreferences.contextIsolation = true;
   });
 
   // App should save bounds when a window is closed.
@@ -109,15 +138,19 @@ function createMainWindow(config, options) {
         }
         break;
       case 'darwin':
-        hideWindow(mainWindow);
+        // need to leave fullscreen first, then hide the window
+        if (mainWindow.isFullScreen()) {
+          mainWindow.once('leave-full-screen', () => {
+            app.hide();
+          });
+          mainWindow.setFullScreen(false);
+        } else {
+          app.hide();
+        }
         break;
       default:
       }
     }
-  });
-
-  mainWindow.on('sheet-end', () => {
-    mainWindow.webContents.send('focus-on-webview');
   });
 
   // Register keyboard shortcuts

@@ -9,20 +9,22 @@ const http = require('http');
 
 const env = require('../modules/environment');
 
-describe.skip('application', function desc() {
+describe.skip('security', function desc() {
   this.timeout(30000);
 
   const serverPort = 8181;
   const testURL = `http://localhost:${serverPort}`;
 
   const config = {
-    version: 1,
+    version: 2,
     teams: [{
       name: 'example_1',
       url: testURL,
+      order: 0,
     }, {
       name: 'example_2',
       url: testURL,
+      order: 1,
     }],
   };
 

@@ -12,14 +12,29 @@ describe('browser/settings.html', function desc() {
   this.timeout(30000);
 
   const config = {
-    version: 1,
+    version: 2,
     teams: [{
       name: 'example',
       url: env.mattermostURL,
+      order: 0,
     }, {
       name: 'github',
       url: 'https://github.com/',
+      order: 1,
     }],
+    showTrayIcon: false,
+    trayIconTheme: 'light',
+    minimizeToTray: false,
+    notifications: {
+      flashWindow: 0,
+      bounceIcon: false,
+      bounceIconType: 'informational',
+    },
+    showUnreadBadge: true,
+    useSpellChecker: true,
+    enableHardwareAcceleration: true,
+    autostart: true,
+    darkMode: false,
   };
 
   beforeEach(async () => {
@@ -63,6 +78,7 @@ describe('browser/settings.html', function desc() {
         click('#addNewServer').
         waitForVisible('#newServerModal').
         setValue('#teamNameInput', 'TestTeam').
+        pause(100).
         setValue('#teamUrlInput', 'http://example.org').
         click('#saveNewServerModal').
         waitForVisible('#newServerModal', true).
@@ -216,18 +232,18 @@ describe('browser/settings.html', function desc() {
           await this.app.client.
             loadSettingsPage().
             click('#inputShowTrayIcon').
-            click('input[value="light"]').
-            pause(700); // wait auto-save
-
-          const config0 = JSON.parse(fs.readFileSync(env.configFilePath, 'utf-8'));
-          config0.trayIconTheme.should.equal('light');
-
-          await this.app.client.
             click('input[value="dark"]').
             pause(700); // wait auto-save
 
+          const config0 = JSON.parse(fs.readFileSync(env.configFilePath, 'utf-8'));
+          config0.trayIconTheme.should.equal('dark');
+
+          await this.app.client.
+            click('input[value="light"]').
+            pause(700); // wait auto-save
+
           const config1 = JSON.parse(fs.readFileSync(env.configFilePath, 'utf-8'));
-          config1.trayIconTheme.should.equal('dark');
+          config1.trayIconTheme.should.equal('light');
         });
       });
     });
@@ -345,8 +361,13 @@ describe('browser/settings.html', function desc() {
 
       await this.app.client.waitForVisible('#serversSaveIndicator', 10000, true);
 
+      const expectedConfig = JSON.parse(JSON.stringify(config.teams.slice(1)));
+      expectedConfig.forEach((value) => {
+        value.order--;
+      });
+
       const savedConfig = JSON.parse(fs.readFileSync(env.configFilePath, 'utf8'));
-      savedConfig.teams.should.deep.equal(config.teams.slice(1));
+      savedConfig.teams.should.deep.equal(expectedConfig);
     });
 
     it('should NOT remove existing team on click Cancel', async () => {
@@ -362,7 +383,7 @@ describe('browser/settings.html', function desc() {
 
     it('should disappear on click Close', async () => {
       await this.app.client.
-        click('.modal-dialog button.close').
+        element('.modal-dialog').click('button.close').
         waitForVisible(modalTitleSelector, 10000, true);
       const existing = await this.app.client.isExisting(modalTitleSelector);
       existing.should.be.false;
@@ -500,6 +521,7 @@ describe('browser/settings.html', function desc() {
         savedConfig.teams.should.deep.contain({
           name: 'TestTeam',
           url: 'http://example.org',
+          order: 2,
         });
       });
     });

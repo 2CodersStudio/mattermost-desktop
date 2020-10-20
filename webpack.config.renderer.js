@@ -2,6 +2,7 @@
 // Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+// This file uses CommonJS.
 /* eslint-disable import/no-commonjs */
 'use strict';
 
@@ -40,6 +41,26 @@ module.exports = merge(base, {
       use: {
         loader: 'url-loader',
       },
+    }, {
+      test: /\.(svg)$/,
+      use: [
+        {
+          loader: 'file-loader',
+          options: {
+            name: '[hash].[ext]',
+            publicPath: './',
+          },
+        },
+        {loader: 'image-webpack-loader'},
+      ],
+    }, {
+      test: /\.(eot|ttf|woff|woff2)?(\?v=[0-9]\.[0-9]\.[0-9])?$/,
+      loader: 'file-loader',
+      options: {
+        name: '[name].[ext]',
+        outputPath: '/../assets/fonts',
+        publicPath: './assets/fonts',
+      },
     }],
   },
   node: {
@@ -53,3 +74,5 @@ module.exports = merge(base, {
     publicPath: '/browser/',
   },
 });
+
+/* eslint-enable import/no-commonjs */

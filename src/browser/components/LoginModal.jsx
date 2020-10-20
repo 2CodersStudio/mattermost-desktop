@@ -8,18 +8,36 @@ import {Button, Col, ControlLabel, Form, FormGroup, FormControl, Modal} from 're
 export default class LoginModal extends React.Component {
   constructor(props) {
     super(props);
-    this.handleSubmit = this.handleSubmit.bind(this);
-    this.usernameRef = React.createRef();
-    this.passwordRef = React.createRef();
+    this.state = {
+      username: '',
+      password: '',
+    };
   }
 
-  handleSubmit(event) {
+  handleSubmit = (event) => {
     event.preventDefault();
-    const usernameNode = this.usernameRef.current;
-    const passwordNode = this.passwordRef.current;
-    this.props.onLogin(this.props.request, usernameNode.value, passwordNode.value);
-    usernameNode.value = '';
-    passwordNode.value = '';
+    this.props.onLogin(this.props.request, this.state.username, this.state.password);
+    this.setState({
+      username: '',
+      password: '',
+    });
+  }
+
+  handleCancel = (event) => {
+    event.preventDefault();
+    this.props.onCancel(this.props.request);
+    this.setState({
+      username: '',
+      password: '',
+    });
+  }
+
+  setUsername = (e) => {
+    this.setState({username: e.target.value});
+  }
+
+  setPassword = (e) => {
+    this.setState({password: e.target.value});
   }
 
   render() {
@@ -54,7 +72,8 @@ export default class LoginModal extends React.Component {
                 <FormControl
                   type='text'
                   placeholder='User Name'
-                  ref={this.usernameRef}
+                  onChange={this.setUsername}
+                  value={this.state.username}
                   onClick={(e) => {
                     e.stopPropagation();
                   }}
@@ -70,7 +89,8 @@ export default class LoginModal extends React.Component {
                 <FormControl
                   type='password'
                   placeholder='Password'
-                  ref={this.passwordRef}
+                  onChange={this.setPassword}
+                  value={this.state.password}
                   onClick={(e) => {
                     e.stopPropagation();
                   }}
@@ -85,7 +105,7 @@ export default class LoginModal extends React.Component {
                     bsStyle='primary'
                   >{'Login'}</Button>
                   { ' ' }
-                  <Button onClick={this.props.onCancel}>{'Cancel'}</Button>
+                  <Button onClick={this.handleCancel}>{'Cancel'}</Button>
                 </div>
               </Col>
             </FormGroup>

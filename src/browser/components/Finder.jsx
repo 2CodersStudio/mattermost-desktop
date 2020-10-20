@@ -1,6 +1,9 @@
 // Copyright (c) 2015-2016 Yuya Ochiai
 // Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
+// eslint-disable-next-line eslint-comments/disable-enable-pair
+/* eslint-disable react/no-set-state */
+
 import React from 'react';
 import PropTypes from 'prop-types';
 
@@ -35,7 +38,10 @@ export default class Finder extends React.Component {
   }
 
   findNext = () => {
-    this.webview.findInPage(this.state.searchTxt);
+    this.webview.findInPage(this.state.searchTxt, {
+      forward: true,
+      findNext: true,
+    });
   };
 
   find = (keyword) => {
@@ -50,7 +56,7 @@ export default class Finder extends React.Component {
   };
 
   findPrev = () => {
-    this.webview.findInPage(this.state.searchTxt, {forward: false});
+    this.webview.findInPage(this.state.searchTxt, {forward: false, findNext: true});
   }
 
   searchTxt = (event) => {
@@ -74,17 +80,27 @@ export default class Finder extends React.Component {
     });
   }
 
+  inputFocus = (e) => {
+    e.stopPropagation();
+    this.props.inputFocus(e, true);
+  }
+
+  inputBlur = (e) => {
+    this.props.inputFocus(e, false);
+  }
+
   render() {
     return (
       <div id='finder'>
-        <div className='finder'>
+        <div className={`finder${process.platform === 'darwin' ? ' macOS' : ''}`}>
           <div className='finder-input-wrapper'>
             <input
               className='finder-input'
               placeholder=''
               value={this.state.searchTxt}
               onChange={this.searchTxt}
-              onBlur={this.props.inputBlur}
+              onBlur={this.inputBlur}
+              onClick={this.inputFocus}
               ref={(input) => {
                 this.searchInput = input;
               }}
@@ -169,5 +185,5 @@ Finder.propTypes = {
   close: PropTypes.func,
   webviewKey: PropTypes.number,
   focusState: PropTypes.bool,
-  inputBlur: PropTypes.func,
+  inputFocus: PropTypes.func,
 };

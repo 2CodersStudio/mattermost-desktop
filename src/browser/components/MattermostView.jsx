@@ -2,8 +2,8 @@
 // Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+// This file uses setState().
 /* eslint-disable react/no-set-state */
-// setState() is necessary for this component
 
 import url from 'url';
 
@@ -12,6 +12,7 @@ import PropTypes from 'prop-types';
 import {ipcRenderer, remote, shell} from 'electron';
 
 import contextMenu from '../js/contextMenu';
+import Utils from '../../utils/util';
 import {protocols} from '../../../electron-builder.json';
 const scheme = protocols[0].schemes[0];
 
@@ -31,23 +32,13 @@ export default class MattermostView extends React.Component {
       isContextMenuAdded: false,
       reloadTimeoutID: null,
       isLoaded: false,
+      basename: '/',
     };
-
-    this.handleUnreadCountChange = this.handleUnreadCountChange.bind(this);
-    this.reload = this.reload.bind(this);
-    this.clearCacheAndReload = this.clearCacheAndReload.bind(this);
-    this.focusOnWebView = this.focusOnWebView.bind(this);
-    this.canGoBack = this.canGoBack.bind(this);
-    this.canGoForward = this.canGoForward.bind(this);
-    this.goBack = this.goBack.bind(this);
-    this.goForward = this.goForward.bind(this);
-    this.getSrc = this.getSrc.bind(this);
-    this.handleDeepLink = this.handleDeepLink.bind(this);
 
     this.webviewRef = React.createRef();
   }
 
-  handleUnreadCountChange(sessionExpired, unreadCount, mentionCount, isUnread, isMentioned) {
+  handleUnreadCountChange = (sessionExpired, unreadCount, mentionCount, isUnread, isMentioned) => {
     if (this.props.onBadgeChange) {
       this.props.onBadgeChange(sessionExpired, unreadCount, mentionCount, isUnread, isMentioned);
     }
@@ -87,6 +78,9 @@ export default class MattermostView extends React.Component {
 
     // Open link in browserWindow. for example, attached files.
     webview.addEventListener('new-window', (e) => {
+      if (!Utils.isValidURI(e.url)) {
+        return;
+      }
       const currentURL = url.parse(webview.getURL());
       const destURL = url.parse(e.url);
       if (destURL.protocol !== 'http:' && destURL.protocol !== 'https:' && destURL.protocol !== `${scheme}:`) {
@@ -94,16 +88,33 @@ export default class MattermostView extends React.Component {
         return;
       }
 
-      if (currentURL.host === destURL.host) {
+      if (Utils.isInternalURL(destURL, currentURL, this.state.basename)) {
         if (destURL.path.match(/^\/api\/v[3-4]\/public\/files\//)) {
           ipcRenderer.send('download-url', e.url);
-        } else {
+        } else if (destURL.path.match(/^\/help\//)) {
+          // continue to open special case internal urls in default browser
+          shell.openExternal(e.url);
+        } else if (Utils.isTeamUrl(this.props.src, e.url, true) || Utils.isAdminUrl(this.props.src, e.url)) {
+          e.preventDefault();
+          this.webviewRef.current.loadURL(e.url);
+        } else if (Utils.isPluginUrl(this.props.src, e.url)) {
           // New window should disable nodeIntegration.
-          window.open(e.url, remote.app.getName(), 'nodeIntegration=no, show=yes');
+          window.open(e.url, remote.app.name, 'nodeIntegration=no, contextIsolation=yes, show=yes');
+        } else if (Utils.isManagedResource(this.props.src, e.url)) {
+          e.preventDefault();
+        } else {
+          e.preventDefault();
+          shell.openExternal(e.url);
         }
       } else {
-        // if the link is external, use default browser.
-        shell.openExternal(e.url);
+        const parsedURL = Utils.parseURL(e.url);
+        const serverURL = Utils.getServer(parsedURL, this.props.teams);
+        if (serverURL !== null && Utils.isTeamUrl(serverURL.url, parsedURL)) {
+          this.props.handleInterTeamLink(parsedURL);
+        } else {
+          // if the link is external, use default os' application.
+          ipcRenderer.send('confirm-protocol', destURL.protocol, e.url);
+        }
       }
     });
 
@@ -112,8 +123,16 @@ export default class MattermostView extends React.Component {
     webview.addEventListener('dom-ready', () => {
       // webview.openDevTools();
 
+      // Remove this once https://github.com/electron/electron/issues/14474 is fixed
+      // - fixes missing cursor bug in electron
+      // - only apply this focus fix if the current view is active
+      if (this.props.active) {
+        webview.blur();
+        webview.focus();
+      }
       if (!this.state.isContextMenuAdded) {
-        contextMenu.setup(webview, {
+        contextMenu.setup({
+          window: webview,
           useSpellChecker: this.props.useSpellChecker,
           onSelectSpellCheckerLocale: (locale) => {
             if (this.props.onSelectSpellCheckerLocale) {
@@ -137,20 +156,26 @@ export default class MattermostView extends React.Component {
       case 'onGuestInitialized':
         self.setState({
           isLoaded: true,
+          basename: event.args[0] || '/',
         });
         break;
       case 'onBadgeChange': {
-        const sessionExpired = event.args[0];
-        const unreadCount = event.args[1];
-        const mentionCount = event.args[2];
-        const isUnread = event.args[3];
-        const isMentioned = event.args[4];
-        self.handleUnreadCountChange(sessionExpired, unreadCount, mentionCount, isUnread, isMentioned);
-
+        self.handleUnreadCountChange(...event.args);
+        break;
+      }
+      case 'dispatchNotification': {
+        const [title, body, channel, teamId, silent, data] = event.args;
+        Utils.dispatchNotification(title, body, silent, data, () => this.webviewRef.current.send('notification-clicked', {channel, teamId}));
         break;
       }
       case 'onNotificationClick':
         self.props.onNotificationClick();
+        break;
+      case 'mouse-move':
+        this.handleMouseMove(event.args[0]);
+        break;
+      case 'mouse-up':
+        this.handleMouseUp();
         break;
       }
     });
@@ -180,9 +205,19 @@ export default class MattermostView extends React.Component {
         break;
       }
     });
+
+    // start listening for user status updates from main
+    ipcRenderer.on('user-activity-update', this.handleUserActivityUpdate);
+    ipcRenderer.on('exit-fullscreen', this.handleExitFullscreen);
   }
 
-  reload() {
+  componentWillUnmount() {
+    // stop listening for user status updates from main
+    ipcRenderer.removeListener('user-activity-update', this.handleUserActivityUpdate);
+    ipcRenderer.removeListener('exit-fullscreen', this.handleExitFullscreen);
+  }
+
+  reload = () => {
     clearTimeout(this.state.reloadTimeoutID);
     this.setState({
       errorInfo: null,
@@ -190,61 +225,79 @@ export default class MattermostView extends React.Component {
       isLoaded: false,
     });
     const webview = this.webviewRef.current;
-    webview.reload();
+    if (webview) {
+      webview.reload();
+    }
   }
 
-  clearCacheAndReload() {
+  clearCacheAndReload = () => {
     this.setState({
       errorInfo: null,
     });
     const webContents = this.webviewRef.current.getWebContents();
-    webContents.session.clearCache(() => {
-      webContents.reload();
-    });
+    webContents.session.clearCache().then(webContents.reload);
   }
 
-  focusOnWebView() {
+  focusOnWebView = () => {
     const webview = this.webviewRef.current;
-    const webContents = webview.getWebContents(); // webContents might not be created yet.
-    if (webContents && !webContents.isFocused()) {
-      webview.focus();
-      webContents.focus();
-    }
+    webview.focus();
   }
 
-  canGoBack() {
+  handleMouseMove = (event) => {
+    const moveEvent = document.createEvent('MouseEvents');
+    moveEvent.initMouseEvent('mousemove', null, null, null, null, null, null, event.clientX, event.clientY);
+    document.dispatchEvent(moveEvent);
+  }
+
+  handleMouseUp = () => {
+    const upEvent = document.createEvent('MouseEvents');
+    upEvent.initMouseEvent('mouseup');
+    document.dispatchEvent(upEvent);
+  }
+
+  canGoBack = () => {
     const webview = this.webviewRef.current;
     return webview.getWebContents().canGoBack();
   }
 
-  canGoForward() {
+  canGoForward = () => {
     const webview = this.webviewRef.current;
     return webview.getWebContents().canGoForward();
   }
 
-  goBack() {
+  goBack = () => {
     const webview = this.webviewRef.current;
     webview.getWebContents().goBack();
   }
 
-  goForward() {
+  goForward = () => {
     const webview = this.webviewRef.current;
     webview.getWebContents().goForward();
   }
 
-  getSrc() {
+  getSrc = () => {
     const webview = this.webviewRef.current;
     return webview.src;
   }
 
-  handleDeepLink(relativeUrl) {
+  handleDeepLink = (relativeUrl) => {
     const webview = this.webviewRef.current;
     webview.executeJavaScript(
-      'history.pushState(null, null, "' + relativeUrl + '");'
+      'history.pushState(null, null, "' + relativeUrl + '");',
     );
     webview.executeJavaScript(
-      'dispatchEvent(new PopStateEvent("popstate", null));'
+      'dispatchEvent(new PopStateEvent("popstate", null));',
     );
+  }
+
+  handleUserActivityUpdate = (event, status) => {
+    // pass user activity update to the webview
+    this.webviewRef.current.send('user-activity-update', status);
+  }
+
+  handleExitFullscreen = () => {
+    // pass exit fullscreen request to the webview
+    this.webviewRef.current.send('exit-fullscreen');
   }
 
   render() {
@@ -254,7 +307,6 @@ export default class MattermostView extends React.Component {
         className='errorView'
         errorInfo={this.state.errorInfo}
         active={this.props.active}
-        withTab={this.props.withTab}
       />) : null;
 
     // Need to keep webview mounted when failed to load.
@@ -262,8 +314,14 @@ export default class MattermostView extends React.Component {
     if (this.props.withTab) {
       classNames.push('mattermostView-with-tab');
     }
-    if (!this.props.active || this.state.errorInfo) {
+    if (!this.props.active) {
       classNames.push('mattermostView-hidden');
+    }
+    if (this.state.errorInfo) {
+      classNames.push('mattermostView-error');
+    }
+    if (this.props.allowExtraBar) {
+      classNames.push('allow-extra-bar');
     }
 
     const loadingImage = !this.state.errorInfo && this.props.active && !this.state.isLoaded ? (
@@ -295,11 +353,16 @@ export default class MattermostView extends React.Component {
 MattermostView.propTypes = {
   name: PropTypes.string,
   id: PropTypes.string,
+  teams: PropTypes.array.isRequired,
+  withTab: PropTypes.bool,
   onTargetURLChange: PropTypes.func,
   onBadgeChange: PropTypes.func,
   src: PropTypes.string,
   active: PropTypes.bool,
-  withTab: PropTypes.bool,
   useSpellChecker: PropTypes.bool,
   onSelectSpellCheckerLocale: PropTypes.func,
+  handleInterTeamLink: PropTypes.func,
+  allowExtraBar: PropTypes.bool,
 };
+
+/* eslint-enable react/no-set-state */

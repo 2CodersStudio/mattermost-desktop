@@ -1,7 +1,6 @@
 // Copyright (c) 2015-2016 Yuya Ochiai
 // Copyright (c) 2016-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
-'use strict';
 
 import './css/index.css';
 
@@ -15,20 +14,47 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import {remote, ipcRenderer} from 'electron';
 
-import buildConfig from '../common/config/buildConfig';
-import settings from '../common/settings';
-import utils from '../utils/util';
+import Config from '../common/config';
 
+import EnhancedNotification from './js/notification';
 import MainPage from './components/MainPage.jsx';
-import AppConfig from './config/AppConfig.js';
 import {createDataURL as createBadgeDataURL} from './js/badge';
 
-const teams = settings.mergeDefaultTeams(AppConfig.data.teams);
+Notification = EnhancedNotification; // eslint-disable-line no-global-assign, no-native-reassign
+
+const config = new Config(remote.app.getPath('userData') + '/config.json', remote.getCurrentWindow().registryConfigData);
+
+const teams = config.teams;
 
 remote.getCurrentWindow().removeAllListeners('focus');
 
 if (teams.length === 0) {
-  window.location = 'settings.html';
+  remote.getCurrentWindow().loadFile('browser/settings.html');
+}
+
+const parsedURL = url.parse(window.location.href, true);
+const initialIndex = parsedURL.query.index ? parseInt(parsedURL.query.index, 10) : getInitialIndex();
+
+let deeplinkingUrl = null;
+if (!parsedURL.query.index || parsedURL.query.index === null) {
+  deeplinkingUrl = remote.getCurrentWindow().deeplinkingUrl;
+}
+
+config.on('update', (configData) => {
+  teams.splice(0, teams.length, ...configData.teams);
+});
+
+config.on('synchronize', () => {
+  ipcRenderer.send('reload-config');
+});
+
+ipcRenderer.on('reload-config', () => {
+  config.reload();
+});
+
+function getInitialIndex() {
+  const element = teams.find((e) => e.order === 0);
+  return element ? teams.indexOf(element) : 0;
 }
 
 function showBadgeWindows(sessionExpired, unreadCount, mentionCount) {
@@ -48,9 +74,9 @@ function showBadgeWindows(sessionExpired, unreadCount, mentionCount) {
     const dataURL = createBadgeDataURL('•');
     sendBadge(dataURL, 'Session Expired: Please sign in to continue receiving notifications.');
   } else if (mentionCount > 0) {
-    const dataURL = createBadgeDataURL(mentionCount.toString());
+    const dataURL = createBadgeDataURL((mentionCount > 99) ? '99+' : mentionCount.toString(), mentionCount > 99);
     sendBadge(dataURL, 'You have unread mentions (' + mentionCount + ')');
-  } else if (unreadCount > 0 && AppConfig.data.showUnreadBadge) {
+  } else if (unreadCount > 0 && config.showUnreadBadge) {
     const dataURL = createBadgeDataURL('•');
     sendBadge(dataURL, 'You have unread channels (' + unreadCount + ')');
   } else {
@@ -63,7 +89,7 @@ function showBadgeOSX(sessionExpired, unreadCount, mentionCount) {
     remote.app.dock.setBadge('•');
   } else if (mentionCount > 0) {
     remote.app.dock.setBadge(mentionCount.toString());
-  } else if (unreadCount > 0 && AppConfig.data.showUnreadBadge) {
+  } else if (unreadCount > 0 && config.showUnreadBadge) {
     remote.app.dock.setBadge('•');
   } else {
     remote.app.dock.setBadge('');
@@ -79,9 +105,9 @@ function showBadgeOSX(sessionExpired, unreadCount, mentionCount) {
 function showBadgeLinux(sessionExpired, unreadCount, mentionCount) {
   if (remote.app.isUnityRunning()) {
     if (sessionExpired) {
-      remote.app.setBadgeCount(mentionCount + 1);
+      remote.app.badgeCount = mentionCount + 1;
     } else {
-      remote.app.setBadgeCount(mentionCount);
+      remote.app.badgeCount = mentionCount;
     }
   }
 
@@ -106,87 +132,77 @@ function showBadge(sessionExpired, unreadCount, mentionCount) {
   }
 }
 
-const permissionRequestQueue = [];
-const requestingPermission = new Array(AppConfig.data.teams.length);
-
-function teamConfigChange(updatedTeams) {
-  AppConfig.set('teams', updatedTeams.slice(buildConfig.defaultTeams.length));
-  teams.splice(0, teams.length, ...updatedTeams);
-  requestingPermission.length = teams.length;
-  ipcRenderer.send('update-menu', AppConfig.data);
-  ipcRenderer.send('update-config');
-}
-
-function feedPermissionRequest() {
-  const webviews = document.getElementsByTagName('webview');
-  const webviewOrigins = Array.from(webviews).map((w) => utils.getDomain(w.getAttribute('src')));
-  for (let index = 0; index < requestingPermission.length; index++) {
-    if (requestingPermission[index]) {
-      break;
-    }
-    for (const request of permissionRequestQueue) {
-      if (request.origin === webviewOrigins[index]) {
-        requestingPermission[index] = request;
-        break;
-      }
-    }
+function teamConfigChange(updatedTeams, callback) {
+  config.set('teams', updatedTeams);
+  if (callback) {
+    config.once('update', callback);
   }
 }
-
-function handleClickPermissionDialog(index, status) {
-  const requesting = requestingPermission[index];
-  ipcRenderer.send('update-permission', requesting.origin, requesting.permission, status);
-  if (status === 'allow' || status === 'block') {
-    const newRequests = permissionRequestQueue.filter((request) => {
-      if (request.permission === requesting.permission && request.origin === requesting.origin) {
-        return false;
-      }
-      return true;
-    });
-    permissionRequestQueue.splice(0, permissionRequestQueue.length, ...newRequests);
-  } else if (status === 'close') {
-    const i = permissionRequestQueue.findIndex((e) => e.permission === requesting.permission && e.origin === requesting.origin);
-    permissionRequestQueue.splice(i, 1);
-  }
-  requestingPermission[index] = null;
-  feedPermissionRequest();
-}
-
-ipcRenderer.on('request-permission', (event, origin, permission) => {
-  if (permissionRequestQueue.length >= 100) {
-    return;
-  }
-  permissionRequestQueue.push({origin, permission});
-  feedPermissionRequest();
-});
 
 function handleSelectSpellCheckerLocale(locale) {
-  console.log(locale);
-  AppConfig.set('spellCheckerLocale', locale);
-  ipcRenderer.send('update-config');
-  ipcRenderer.send('update-dict');
+  config.set('spellCheckerLocale', locale);
+  ipcRenderer.send('update-dict', locale);
 }
 
-const parsedURL = url.parse(window.location.href, true);
-const initialIndex = parsedURL.query.index ? parseInt(parsedURL.query.index, 10) : 0;
+function moveTabs(originalOrder, newOrder) {
+  const tabOrder = teams.concat().map((team, index) => {
+    return {
+      index,
+      order: team.order,
+    };
+  }).sort((a, b) => (a.order - b.order));
 
-let deeplinkingUrl = null;
-if (!parsedURL.query.index || parsedURL.query.index === null) {
-  deeplinkingUrl = remote.getCurrentWindow().deeplinkingUrl;
+  const team = tabOrder.splice(originalOrder, 1);
+  tabOrder.splice(newOrder, 0, team[0]);
+
+  let teamIndex;
+  tabOrder.forEach((t, order) => {
+    if (order === newOrder) {
+      teamIndex = t.index;
+    }
+    teams[t.index].order = order;
+  });
+  teamConfigChange(teams);
+  return teamIndex;
+}
+
+function getDarkMode() {
+  if (process.platform !== 'darwin') {
+    return config.darkMode;
+  }
+  return null;
+}
+
+function setDarkMode() {
+  if (process.platform !== 'darwin') {
+    const darkMode = Boolean(config.darkMode);
+    config.set('darkMode', !darkMode);
+    return !darkMode;
+  }
+  return null;
+}
+
+function openMenu() {
+  if (process.platform !== 'darwin') {
+    ipcRenderer.send('open-app-menu');
+  }
 }
 
 ReactDOM.render(
   <MainPage
     teams={teams}
+    localTeams={config.localTeams}
     initialIndex={initialIndex}
     onBadgeChange={showBadge}
     onTeamConfigChange={teamConfigChange}
-    useSpellChecker={AppConfig.data.useSpellChecker}
+    useSpellChecker={config.useSpellChecker}
     onSelectSpellCheckerLocale={handleSelectSpellCheckerLocale}
     deeplinkingUrl={deeplinkingUrl}
-    showAddServerButton={buildConfig.enableServerManagement}
-    requestingPermission={requestingPermission}
-    onClickPermissionDialog={handleClickPermissionDialog}
+    showAddServerButton={config.enableServerManagement}
+    getDarkMode={getDarkMode}
+    setDarkMode={setDarkMode}
+    moveTabs={moveTabs}
+    openMenu={openMenu}
   />,
   document.getElementById('content')
 );

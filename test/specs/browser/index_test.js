@@ -14,14 +14,29 @@ describe('browser/index.html', function desc() {
   this.timeout(30000);
 
   const config = {
-    version: 1,
+    version: 2,
     teams: [{
       name: 'example',
       url: env.mattermostURL,
+      order: 0,
     }, {
       name: 'github',
       url: 'https://github.com/',
+      order: 1,
     }],
+    showTrayIcon: false,
+    trayIconTheme: 'light',
+    minimizeToTray: false,
+    notifications: {
+      flashWindow: 0,
+      bounceIcon: false,
+      bounceIconType: 'informational',
+    },
+    showUnreadBadge: true,
+    useSpellChecker: true,
+    enableHardwareAcceleration: true,
+    autostart: true,
+    darkMode: false,
   };
 
   const serverPort = 8181;
@@ -53,16 +68,6 @@ describe('browser/index.html', function desc() {
     this.server.close(done);
   });
 
-  it('should NOT show tabs when there is one team', async () => {
-    fs.writeFileSync(env.configFilePath, JSON.stringify({
-      url: env.mattermostURL,
-    }));
-    await this.app.restart();
-
-    const existing = await this.app.client.isExisting('#tabBar');
-    existing.should.be.false;
-  });
-
   it('should set src of webview from config file', async () => {
     const src0 = await this.app.client.getAttribute('#mattermostView0', 'src');
     src0.should.equal(config.teams[0].url);
@@ -91,13 +96,15 @@ describe('browser/index.html', function desc() {
       waitForVisible('#mattermostView0', 2000, true);
   });
 
-  it('should show error when using incorrect URL', async () => {
+  // validation now prevents incorrect url's from being used
+  it.skip('should show error when using incorrect URL', async () => {
     this.timeout(30000);
     fs.writeFileSync(env.configFilePath, JSON.stringify({
-      version: 1,
+      version: 2,
       teams: [{
         name: 'error_1',
         url: 'http://false',
+        order: 0,
       }],
     }));
     await this.app.restart();
@@ -107,10 +114,11 @@ describe('browser/index.html', function desc() {
 
   it('should set window title by using webview\'s one', async () => {
     fs.writeFileSync(env.configFilePath, JSON.stringify({
-      version: 1,
+      version: 2,
       teams: [{
         name: 'title_test',
         url: `http://localhost:${serverPort}`,
+        order: 0,
       }],
     }));
     await this.app.restart();
@@ -122,13 +130,15 @@ describe('browser/index.html', function desc() {
   // Skip because it's very unstable in CI
   it.skip('should update window title when the activated tab\'s title is updated', async () => {
     fs.writeFileSync(env.configFilePath, JSON.stringify({
-      version: 1,
+      version: 2,
       teams: [{
         name: 'title_test_0',
         url: `http://localhost:${serverPort}`,
+        order: 0,
       }, {
         name: 'title_test_1',
         url: `http://localhost:${serverPort}`,
+        order: 1,
       }],
     }));
     await this.app.restart();
@@ -158,13 +168,15 @@ describe('browser/index.html', function desc() {
   // Skip because it's very unstable in CI
   it.skip('should update window title when a tab is selected', async () => {
     fs.writeFileSync(env.configFilePath, JSON.stringify({
-      version: 1,
+      version: 2,
       teams: [{
         name: 'title_test_0',
         url: `http://localhost:${serverPort}`,
+        order: 0,
       }, {
         name: 'title_test_1',
         url: `http://localhost:${serverPort}`,
+        order: 1,
       }],
     }));
     await this.app.restart();
